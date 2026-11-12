@@ -736,7 +736,7 @@ body.pad input:focus { outline: 3px solid var(--gold); outline-offset: 4px; }
   </div>
   <div class="menufoot">
     <p class="menucredit"><b>JUANPA GAMES</b> · Una idea de Juan Pablo Sánchez Ramírez · Programado junto a Claude, de Anthropic</p>
-    <p class="muted" style="font-size:13px">Versión 2.5</p>
+    <p class="muted" style="font-size:13px">Versión 2.5.1</p>
   </div>
   <a class="discordbubble" id="btnDiscord" href="https://discord.gg/BWBnnfHnj" target="_blank" rel="noopener" tabindex="0" aria-label="Discord" title="Discord">
     <svg viewBox="0 0 32 32" aria-hidden="true"><path fill="#fff" d="M6 5h20a4 4 0 0 1 4 4v11a4 4 0 0 1-4 4H14l-6 5v-5H6a4 4 0 0 1-4-4V9a4 4 0 0 1 4-4z"/><circle cx="11" cy="14.5" r="2.2" fill="#5865f2"/><circle cx="16" cy="14.5" r="2.2" fill="#5865f2"/><circle cx="21" cy="14.5" r="2.2" fill="#5865f2"/></svg>
@@ -6649,7 +6649,7 @@ const Intro = (() => {
 //  EN LÍNEA (v1.7): salas con código. El anfitrión corre la partida y
 //  manda lo que pasa; los invitados solo mandan hacia dónde se mueven.
 // ======================================================================
-const NET_VER = "2.5";   // 1.18.1: panel de comandos arriba a la izquierda
+const NET_VER = "2.5.1";   // 1.18.1: panel de comandos arriba a la izquierda
 function escHtml(v) { return String(v).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
 const NET = { role: null, peer: null, code: "", lobby: [], me: 0, game: "arcade", char: "campesino", active: false, input: {}, seen: {},
               sfx: [], hostConn: null, ents: new Map(), lastSnap: 0, lastIn: 0, lastDir: "", lastRecv: 0, localPause: false, leaving: false, wpSig: [], joinTimer: 0 };
@@ -6925,9 +6925,16 @@ function netSnap() {
     // 5 números por bicho: diferencia de id, tipo, x, y, y (vida en décimos × 2 + golpe)
     e.push(o.id - lastId, ETYPES.indexOf(o.type), Math.round(o.x) - cx, Math.round(o.y) - cy, Math.round(clamp(o.hp / o.maxHp, 0, 1) * 10) * 2 + (o.flash > 0 ? 1 : 0));
     lastId = o.id;
-    if (o.boss || o.charge > 0 || o.jump || o.type === "caiman" || o.type === "toro" || o.type === "cascabel")
-      ex[o.id] = { hp: Math.round(o.hp), mh: Math.round(o.maxHp), r: o.r, bn: o.bossName || "", sb: o.storyBoss ? 1 : 0, fn: o.final ? 1 : 0, sn: r1(o.seen), tp: o.tp ? { phase: o.tp.phase, t: r1(o.tp.t) } : null, ds: o.dash ? 1 : 0, ch: r1(o.charge), cx: r1(o.cdx), cy: r1(o.cdy), tm: r1(o.timer),
-               j: o.jump ? { phase: o.jump.phase, t: r1(o.jump.t), tx: Math.round(o.jump.tx), ty: Math.round(o.jump.ty) } : null };
+    // v2.5.1: solo lo que el invitado necesita y nada que valga cero (antes esto pesaba ~8 KB por foto)
+    const X = {}, D0 = ENEMIES[o.type] || {};
+    if (o.boss) { X.hp = Math.round(o.hp); X.mh = Math.round(o.maxHp); if (o.bossName) X.bn = o.bossName; if (o.storyBoss) X.sb = 1; if (o.final) X.fn = 1; if (o.seen) X.sn = r1(o.seen); }
+    if (o.r !== D0.r) X.r = o.r;
+    if (o.tp) X.tp = { phase: o.tp.phase, t: r1(o.tp.t) };
+    if (o.dash) X.ds = 1;
+    if (o.charge > 0) { X.ch = r1(o.charge); X.cx = r1(o.cdx); X.cy = r1(o.cdy); }
+    if (o.timer < 0.7) X.tm = r1(o.timer);
+    if (o.jump) X.j = { phase: o.jump.phase, t: r1(o.jump.t), tx: Math.round(o.jump.tx), ty: Math.round(o.jump.ty) };
+    for (const k in X) { ex[o.id] = X; break; }
   }
   const p = S.players.map((P, i) => {
     const cdq = {}; for (const k in P.cd) if (P.cd[k] > 0) cdq[k] = Math.ceil(P.cd[k]);
@@ -6936,17 +6943,17 @@ function netSnap() {
     if (sig !== NET.wpSig[i] || Math.random() < 0.05) { NET.wpSig[i] = sig; q.wp = P.weapons; q.ps = P.passives; q.sk = P.skills; }
     return q;
   });
-  const g = []; let gn = 0;
-  for (const o of S.gems) if (inView(o) && (o.heal || o.chest || gn++ < 220)) g.push(Math.round(o.x) - cx, Math.round(o.y) - cy, o.mandarina ? "t" : o.heal ? (o.mango ? "m" : "a") : o.chest ? (o.big ? "B" : "c") : o.v);
+  const g = []; let gn = 0; NET.gemTick = (NET.gemTick || 0) + 1; const sendGems = NET.gemTick % 2 === 1;
+  if (sendGems) for (const o of S.gems) if (inView(o) && (o.heal || o.chest || gn++ < 180)) g.push(Math.round(o.x) - cx, Math.round(o.y) - cy, o.mandarina ? "t" : o.heal ? (o.mango ? "m" : "a") : o.chest ? (o.big ? "B" : "c") : o.v);
   const sh = []; for (const s of S.shots) if (!(s.delay > 0)) sh.push(Math.round(s.x), Math.round(s.y), s.kind === "arpon" ? 1 : s.kind === "petalo" ? 2 : 0, r1(Math.atan2(s.vy, s.vx)));
   const es = []; for (const b of S.eshots) es.push(Math.round(b.x), Math.round(b.y), r1(b.r), b.c || 0);
   const fx = [], tx = [];
-  for (const f of S.fx) if (!f._s && fx.length < 90) { f._s = 1; fx.push(f.boom ? { b: 1, x: Math.round(f.x), y: Math.round(f.y), r: Math.round(f.r), l: r1(f.life), mx: r1(f.max) } : [Math.round(f.x), Math.round(f.y), Math.round(f.vx), Math.round(f.vy), r1(f.life), f.c, r1(f.r)]); }
+  for (const f of S.fx) if (!f._s && fx.length < (f.boom ? 90 : 40)) { f._s = 1; fx.push(f.boom ? { b: 1, x: Math.round(f.x), y: Math.round(f.y), r: Math.round(f.r), l: r1(f.life), mx: r1(f.max) } : [Math.round(f.x), Math.round(f.y), Math.round(f.vx), Math.round(f.vy), r1(f.life), f.c, r1(f.r)]); }
   for (const t of S.texts) if (!t._s && tx.length < 40) { t._s = 1; tx.push({ x: Math.round(t.x), y: Math.round(t.y), v: t.v, l: r1(t.life), b: t.big ? 1 : 0, mc: t.mecha ? 1 : 0, h: t.hurt ? 1 : 0, he: t.heal ? 1 : 0, cr: t.crit ? 1 : 0 }); }
   const snap = { t: "snap", cx, cy, ex, tm: r1(S.t), st: S.state, k: S.kills, lv: S.level, xp: r1(S.xp), xn: r1(S.xpNext), bn: S.beans, sk: r1(S.shake),
     ev: S.event ? { type: S.event.type, t: r1(S.event.t), dur: S.event.dur > 1e6 ? 1e9 : S.event.dur, forced: !!S.event.forced } : null,
     ph: S.phase, li: { dusk: r1(S.light.dusk * 10) / 10, night: r1(S.light.night * 10) / 10 }, ba: S.banner, wv: S.wave, md: S.madreKilled ? 1 : 0,
-    p, e, g, sh, es, fx, tx, sfx: NET.sfx.splice(0),
+    p, e, g: sendGems ? g : undefined, sh, es, fx, tx, sfx: NET.sfx.splice(0),
     bo: (S.bolts || []).map(b => [Math.round(b.x), Math.round(b.y), r1(b.t)]), rf: S.reinf, dr: S.drops.map(d => [Math.round(d.x), Math.round(d.y), r1(d.t)]), cv: S.chivas.map(c => [Math.round(c.x), Math.round(c.y), Math.sign(c.vx), c.emo || ""]), al: allyDots(),
     tj: S.tejos.map(j => ({ sx: Math.round(j.sx), sy: Math.round(j.sy), tx: Math.round(j.tx), ty: Math.round(j.ty), t: r1(j.t), dur: j.dur, mini: j.mini ? 1 : 0, radius: Math.round(j.radius || 0), dyn: j.dyn ? 1 : 0 })),
     sl: S.slashes.map(s => ({ px: s.px, a: r1(s.a), arc: r1(s.arc), range: Math.round(s.range), life: Math.round(s.life * 100) / 100, max: s.max, evo: s.evo ? 1 : 0, rejo: s.rejo ? 1 : 0 })),
@@ -7021,12 +7028,13 @@ function netApply(d) {
     if (!o) o = { id, type, x: ex, y: ey, r: D.r, phase: Math.random() * 6.28, flash: 0, charge: 0, cdx: 0, cdy: 0, timer: 3, jump: null, boss: !!D.boss, final: !!D.final, kb: 0 };
     o.tx = ex; o.ty = ey; if (fl & 1) o.flash = 0.12; o.hp = (fl >> 1) * 10; o.maxHp = 100;
     const x = d.ex[id];
-    if (x) { o.hp = x.hp; o.maxHp = x.mh; o.r = x.r; if (x.bn) o.bossName = x.bn; o.storyBoss = !!x.sb; o.final = !!x.fn; o.seen = x.sn; o.tp = x.tp; o.dash = x.ds; o.charge = x.ch; o.cdx = x.cx; o.cdy = x.cy; o.timer = x.tm; o.jump = x.j; }
-    else { o.charge = 0; o.jump = null; }
+    o.r = x && x.r ? x.r : D.r;
+    if (x) { if (x.hp !== undefined) { o.hp = x.hp; o.maxHp = x.mh; } if (x.bn) o.bossName = x.bn; o.storyBoss = !!x.sb; o.final = !!(x.fn || D.final); o.seen = x.sn || o.seen || 0; o.tp = x.tp || null; o.dash = x.ds || 0; o.charge = x.ch || 0; o.cdx = x.cx || 0; o.cdy = x.cy || 0; o.timer = x.tm !== undefined ? x.tm : 3; o.jump = x.j || null; }
+    else { o.charge = 0; o.jump = null; o.tp = null; o.dash = 0; o.timer = 3; }
     map.set(o.id, o);
   }
   NET.ents = map; S.enemies = [...map.values()];
-  S.gems = []; for (let i = 0; i < d.g.length; i += 3) {
+  if (d.g) S.gems = []; if (d.g) for (let i = 0; i < d.g.length; i += 3) {
     const k = d.g[i + 2], g = { x: d.g[i] + cx, y: d.g[i + 1] + cy, v: 0, pull: false };
     if (k === "t") { g.mandarina = true; g.v = 0; } else if (k === "m" || k === "a") { g.heal = 15; g.mango = k === "m"; } else if (k === "c" || k === "B") { g.chest = true; g.big = k === "B"; } else g.v = k;
     S.gems.push(g);
