@@ -1,5 +1,5 @@
 // Service worker de Selva Salvaje: guarda el juego para que funcione sin internet.
-const CACHE = "selva-salvaje-v2.5.3";
+const CACHE = "selva-salvaje-v2.5.5";
 const FILES = ["./", "./index.html", "./manifest.webmanifest", "./peerjs.min.js",
   "./fonts/bungee-latin-400-normal.woff2", "./fonts/barlow-semi-condensed-latin-500-normal.woff2",
   "./fonts/barlow-semi-condensed-latin-600-normal.woff2", "./fonts/barlow-semi-condensed-latin-700-normal.woff2",
