@@ -332,6 +332,8 @@ body.pad .carr { display: none; }
 /* zonas como postales */
 .zones.hscroll .zonebtn { width: 176px; padding: 0; display: flex; flex-direction: column; border-radius: 16px; text-align: left; transition: transform .15s, box-shadow .15s; background: #0d1a12 !important; }
 .zones.hscroll .zonebtn::before { display: none; }
+.zones .zonebtn canvas { display: block; width: 100%; height: auto; max-width: 176px; }
+#netZonePick { min-width: 0; }
 .zones.hscroll .zonebtn canvas { display: block; width: 176px; height: 132px; border-bottom: 2px solid var(--zc, #3d7346); }
 .zones.hscroll .zonebtn .zt { display: grid; gap: 3px; padding: 9px 12px 12px; min-height: 74px; align-content: start; }
 .zones.hscroll .zonebtn b { font-size: 16px; } .zones.hscroll .zonebtn small { font-size: 13px; }
@@ -736,7 +738,7 @@ body.pad input:focus { outline: 3px solid var(--gold); outline-offset: 4px; }
   </div>
   <div class="menufoot">
     <p class="menucredit"><b>JUANPA GAMES</b> · Una idea de Juan Pablo Sánchez Ramírez · Programado junto a Claude, de Anthropic</p>
-    <p class="muted" style="font-size:13px">Versión 2.5.1</p>
+    <p class="muted" style="font-size:13px">Versión 2.5.3</p>
   </div>
   <a class="discordbubble" id="btnDiscord" href="https://discord.gg/BWBnnfHnj" target="_blank" rel="noopener" tabindex="0" aria-label="Discord" title="Discord">
     <svg viewBox="0 0 32 32" aria-hidden="true"><path fill="#fff" d="M6 5h20a4 4 0 0 1 4 4v11a4 4 0 0 1-4 4H14l-6 5v-5H6a4 4 0 0 1-4-4V9a4 4 0 0 1 4-4z"/><circle cx="11" cy="14.5" r="2.2" fill="#5865f2"/><circle cx="16" cy="14.5" r="2.2" fill="#5865f2"/><circle cx="21" cy="14.5" r="2.2" fill="#5865f2"/></svg>
@@ -1013,7 +1015,7 @@ body.pad input:focus { outline: 3px solid var(--gold); outline-offset: 4px; }
       <div class="lobbylist" id="lobbyList"></div>
       <div class="playersrow"><span class="lbl">Modo</span><div class="seg" id="netModes"><button type="button" data-netgame="arcade">Arcade</button><button type="button" data-netgame="endless">Sin fin</button><button type="button" data-netgame="waves">Oleadas</button></div></div>
       <div class="playersrow"><span class="lbl">Dificultad</span><div class="seg diffseg" id="netDiff"><button type="button" data-netdiff="normal">Normal</button><button type="button" data-netdiff="pesadilla">🌙 Pesadilla</button></div></div>
-      <div class="zonepick" id="netZonePick"><span class="lbl">Zona</span><div class="zones" id="netZones"></div></div>
+      <div class="zonepick" id="netZonePick"><span class="lbl">Zona</span><div class="cwrap"><span class="carr l" data-for="netZones" aria-hidden="true">‹</span><div class="zones hscroll" id="netZones"></div><span class="carr r" data-for="netZones" aria-hidden="true">›</span></div></div>
       <h3 class="nethead">Tu personaje</h3>
       <div class="chars" id="charsNet"></div>
       <div class="charinfo" id="charInfoNet"></div>
@@ -2672,7 +2674,7 @@ function carouselArrows() {                                    // flechas ‹ �
   }
 }
 document.addEventListener("click", e => { const a = e.target.closest && e.target.closest(".carr"); if (!a) return; const box = $(a.dataset.for); if (box) { box.scrollBy({ left: (a.classList.contains("l") ? -1 : 1) * box.clientWidth * 0.8, behavior: "smooth" }); Music.sfx("tick"); } });
-for (const id of ["zones", "arsGrid", "passTrack"]) { const box = $(id); if (box) { box.addEventListener("scroll", carouselArrows, { passive: true });
+for (const id of ["zones", "netZones", "arsGrid", "passTrack"]) { const box = $(id); if (box) { box.addEventListener("scroll", carouselArrows, { passive: true });
   box.addEventListener("wheel", e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && box.scrollWidth > box.clientWidth) { box.scrollBy({ left: e.deltaY, behavior: "auto" }); e.preventDefault(); } }, { passive: false }); } }
 window.addEventListener("resize", carouselArrows);
 function renderZones(boxId, current, onPick, disabled, forced) {
@@ -6798,7 +6800,9 @@ function renderLobby() {
   for (const b of document.querySelectorAll("#netModes [data-netgame]")) { b.setAttribute("aria-pressed", String(b.dataset.netgame === NET.game)); b.disabled = !host; }
   for (const b of document.querySelectorAll("#netDiff [data-netdiff]")) { const nm = b.dataset.netdiff === "pesadilla"; b.setAttribute("aria-pressed", String(nm === !!NET.nm)); b.disabled = !host || (nm && !nightmareOpen()) || (!nm && NET.lobby.length > 4); }
   NET.zone = NET.zone || SETUP.zone || "random";
+  const nzX = $("netZones").scrollLeft;
   renderZones("netZones", NET.zone, id => { if (NET.role !== "host") return; NET.zone = id; SETUP.zone = id; store("selva_zone", id); netSendLobby(); renderLobby(); }, !host, !!NET.nm);
+  $("netZones").scrollLeft = nzX; requestAnimationFrame(carouselArrows);
   const box = $("charsNet");
   if (box.dataset.built !== "1") {
     box.innerHTML = "";
@@ -6888,7 +6892,7 @@ function netStart() {
   SETUP.game = NET.game; setPlayers(NET.lobby.length); SETUP.chars = NET.lobby.map(p => p.char);
   const names = NET.lobby.map(p => p.name), now = performance.now();
   NET.runZone = pickZone(NET.zone, NET.nm && nightmareOpen());
-  NET.lobby.forEach((p, i) => { if (i > 0) { NET.seen[i] = now; netSend(p.conn, { t: "start", you: i, game: NET.game, zone: NET.runZone, nm: NET.nm && nightmareOpen() ? 1 : 0, skins: NET.lobby.map((q, k) => k === 0 ? mySkin(q.char) : netSkin(q.sk && q.sk[q.char], q.char)), ars: NET.lobby.map((q, k) => k === 0 ? myArsenal(q.char) : arsOk(q.ar && q.ar[q.char], q.char)), chars: SETUP.chars, names }); } });
+  NET.lobby.forEach((p, i) => { if (i > 0) { NET.seen[i] = now; p.snapIv = 66; p.snapAt = 0; p.sfxq = []; netSend(p.conn, { t: "start", you: i, game: NET.game, zone: NET.runZone, nm: NET.nm && nightmareOpen() ? 1 : 0, skins: NET.lobby.map((q, k) => k === 0 ? mySkin(q.char) : netSkin(q.sk && q.sk[q.char], q.char)), ars: NET.lobby.map((q, k) => k === 0 ? myArsenal(q.char) : arsOk(q.ar && q.ar[q.char], q.char)), chars: SETUP.chars, names }); } });
   beginRun();
 }
 function netBackToLobby() {                              // el anfitrión vuelve a la sala con los mismos amigos
@@ -6903,15 +6907,21 @@ function netHostTick(now) {
     const p = NET.lobby[i];
     if (p.conn && !p.left && now - (NET.seen[i] || now) > 10000) { const c = p.conn; netGuestLeft(c); try { c.close(); } catch (e) {} }
   }
-  if (now - NET.lastSnap < (NET.bigSnap ? 90 : 66)) return;
+  // v2.5.3: cada amigo recibe fotos al ritmo que aguanta su conexión (15 por segundo si va bien, hasta 5 si va mal)
+  const due = [];
+  for (let i = 1; i < NET.lobby.length; i++) { const p = NET.lobby[i]; if (p.conn && p.conn.open && now - (p.snapAt || 0) >= (p.snapIv || 66)) due.push(p); }
+  if (!due.length || now - NET.lastSnap < 60) return;
   NET.lastSnap = now;
-  const snap = netSnap(), parts = netPack(snap);
-  NET.bigSnap = parts.length > 1;
-  for (let i = 1; i < NET.lobby.length; i++) {
-    const c = NET.lobby[i].conn; if (!c || !c.open) continue;
-    // si a ese amigo todavía no le han llegado las fotos anteriores, no se le amontonan más: se salta esta
-    const queued = (c.bufferSize || 0) + (c.dataChannel ? c.dataChannel.bufferedAmount : 0);
-    if (queued > 48000) { NET.skipped = (NET.skipped || 0) + 1; continue; }
+  const snap = netSnap(), sfx = snap.sfx || [];
+  for (let i = 1; i < NET.lobby.length; i++) { const p = NET.lobby[i]; p.sfxq = (p.sfxq || []).concat(sfx).slice(-16); }   // los sonidos no se pierden si a alguien se le salta una foto
+  for (const p of due) {
+    const c = p.conn, queued = (c.bufferSize || 0) + (c.dataChannel ? c.dataChannel.bufferedAmount : 0);
+    p.snapAt = now;
+    // si todavía no le han llegado las fotos anteriores, no se le amontonan más: se salta esta y se le baja el ritmo
+    if (queued > 16000) { p.snapIv = Math.min(200, (p.snapIv || 66) + 34); NET.skipped = (NET.skipped || 0) + 1; continue; }
+    if (queued < 3000 && (p.snapIv || 66) > 66) p.snapIv = Math.max(66, p.snapIv - 6);   // cuando se recupera, vuelve a subir poco a poco
+    snap.sfx = p.sfxq; p.sfxq = [];
+    const parts = netPack(snap); if (parts.length > 1) p.snapIv = Math.max(p.snapIv || 66, 90);
     netSendPacked(c, parts);
   }
 }
@@ -6988,7 +6998,7 @@ function netGuestMsg(d) {
 }
 function netGuestStart(d) {
   clearTimeout(NET.joinTimer);
-  NET.active = true; NET.me = d.you; NET.ents = new Map(); NET.localPause = false; NET.lastRecv = performance.now();
+  NET.active = true; NET.me = d.you; NET.ents = new Map(); NET.localPause = false; NET.lastRecv = performance.now(); NET.snapAt = 0; NET.gap = 66;
   SETUP.game = d.game;
   S = { net: NET, mode: d.chars.length > 1 ? "duo" : "solo", n: d.chars.length, game: d.game, names: d.names, eshots: [], tOff: 0, chapter: null, biome: d.zone || "cafetal",
         mods: { horde: 1, beans: 1, enemySpeed: 1, playerSpeed: 1 }, daily: null, state: "play", t: 0, kills: 0, level: 1, xp: 0, xpNext: 6, pendingLevels: 0, picker: 0,
@@ -7002,6 +7012,7 @@ function netGuestStart(d) {
 }
 function netApply(d) {
   if (!S || !S.net) return;
+  { const now = performance.now(); if (NET.snapAt) NET.gap = Math.min(250, (NET.gap || 66) * 0.8 + (now - NET.snapAt) * 0.2); NET.snapAt = now; }
   S.t = d.tm; S.kills = d.k; S.level = d.lv; S.xp = d.xp; S.xpNext = d.xn; S.beans = d.bn; S.shake = Math.max(S.shake, d.sk);
   S.event = d.ev; S.phase = d.ph; S.light = d.li; S.banner = d.ba; S.wave = d.wv; S.madreKilled = !!d.md;
   S.bolts = (d.bo || []).map(a => ({ x: a[0], y: a[1], t: a[2], r: 58 })); S.reinf = d.rf | 0; S.drops = (d.dr || []).map(a => ({ x: a[0], y: a[1], t: a[2] })); S.chivas = (d.cv || []).map(a => ({ x: a[0], y: a[1], vx: a[2], emo: a[3] || "" })); S.allyDots = d.al || [];
@@ -7045,11 +7056,11 @@ function netApply(d) {
   for (const t of d.tx) S.texts.push({ x: t.x, y: t.y, v: t.v, life: t.l, big: !!t.b, mecha: !!t.mc, hurt: !!t.h, heal: !!t.he, crit: !!t.cr });
   S.tejos = d.tj; S.slashes = d.sl; S.hazards = d.hz; S.nets = d.nt;
   S.capys = d.cp.map(c => ({ x: c[0], y: c[1], vx: c[2], vy: c[3], phase: (c[0] + c[1]) * 0.05 }));
-  for (const s of d.sfx) Music.sfx(s);
+  for (const s of d.sfx || []) Music.sfx(s);
 }
 function guestTick(dt) {
   S.t += dt;
-  const k = Math.min(1, dt * 14);
+  const k = Math.min(1, dt / Math.max(0.06, (NET.gap || 66) / 1000));   // v2.5.3: se suaviza según qué tan seguido llegan las fotos
   for (const P of S.players) if (P.tx !== undefined) { P.x += (P.tx - P.x) * k; P.y += (P.ty - P.y) * k; }
   for (const e of S.enemies) { e.x += (e.tx - e.x) * k; e.y += (e.ty - e.y) * k; e.phase += dt * 8; e.flash = Math.max(0, e.flash - dt); }
   for (const f of S.fx) { f.life -= dt; if (!f.boom) { f.x += f.vx * dt; f.y += f.vy * dt; f.vx *= 0.9; f.vy *= 0.9; } }
