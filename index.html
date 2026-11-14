@@ -767,7 +767,7 @@ body.pad input:focus { outline: 3px solid var(--gold); outline-offset: 4px; }
   </div>
   <div class="menufoot">
     <p class="menucredit"><b>JUANPA GAMES</b> · Una idea de Juan Pablo Sánchez Ramírez · Programado junto a Claude, de Anthropic</p>
-    <p class="muted" style="font-size:13px">Versión 2.6</p>
+    <p class="muted" style="font-size:13px">Versión 2.6.1</p>
   </div>
   <a class="discordbubble" id="btnDiscord" href="https://discord.gg/BWBnnfHnj" target="_blank" rel="noopener" tabindex="0" aria-label="Discord" title="Discord">
     <svg viewBox="0 0 32 32" aria-hidden="true"><path fill="#fff" d="M6 5h20a4 4 0 0 1 4 4v11a4 4 0 0 1-4 4H14l-6 5v-5H6a4 4 0 0 1-4-4V9a4 4 0 0 1 4-4z"/><circle cx="11" cy="14.5" r="2.2" fill="#5865f2"/><circle cx="16" cy="14.5" r="2.2" fill="#5865f2"/><circle cx="21" cy="14.5" r="2.2" fill="#5865f2"/></svg>
@@ -7413,7 +7413,7 @@ function netGuestStart(d) {
 }
 function netApply(d) {
   if (!S || !S.net) return;
-  { const now = performance.now(); if (NET.snapAt) NET.gap = Math.min(250, (NET.gap || 66) * 0.8 + (now - NET.snapAt) * 0.2); NET.snapAt = now; }
+  { const now = performance.now(); NET.sdt = NET.snapAt ? Math.min(0.5, Math.max(0.03, (now - NET.snapAt) / 1000)) : 0.066; if (NET.snapAt) NET.gap = Math.min(250, (NET.gap || 66) * 0.8 + (now - NET.snapAt) * 0.2); NET.snapAt = now; }
   S.t = d.tm; S.kills = d.k; S.level = d.lv; S.xp = d.xp; S.xpNext = d.xn; S.beans = d.bn; S.shake = Math.max(S.shake, d.sk);
   S.event = d.ev; S.phase = d.ph; S.light = d.li; S.banner = d.ba; S.wave = d.wv; S.madreKilled = !!d.md;
   S.bolts = (d.bo || []).map(a => ({ x: a[0], y: a[1], t: a[2], r: 58 })); S.reinf = d.rf | 0; S.drops = (d.dr || []).map(a => ({ x: a[0], y: a[1], t: a[2] })); S.chivas = (d.cv || []).map(a => ({ x: a[0], y: a[1], vx: a[2], emo: a[3] || "" })); S.allyDots = d.al || [];
@@ -7424,6 +7424,7 @@ function netApply(d) {
   d.p.forEach((q, i) => {
     const P = S.players[i]; if (!P) return;
     if (P.fresh) { P.x = q.x; P.y = q.y; P.fresh = false; }
+    if (i !== NET.me) netVel(P, q.x, q.y);
     P.tx = q.x; P.ty = q.y; if (q.sp) P.netSp = q.sp; if (i !== NET.me) { P.face = q.f; P.moving = !!q.m; } P.walk = q.w; P.down = !!q.d; P.reviveT = q.rv; P.bleed = q.bl || 0; P.inv = q.iv; P.hp = q.hp; P.maxHp = q.mh;
     P.areaMult = q.am; P.trompoAng = q.ta; P.gone = !!q.g; P.cd = q.cd || {}; P.stunT = q.st || 0; P.auraT = q.au ? 1 : 0; P.auraR = q.au || 0; P.bf = q.sd ? { shield: { t: 1, f: 1 } } : {};
     if (q.wp) { P.weapons = q.wp; P.passives = q.ps; P.skills = q.sk || {}; loadout = true; }
@@ -7438,6 +7439,7 @@ function netApply(d) {
     const ex = d.e[k + 2] + cx, ey = d.e[k + 3] + cy, fl = d.e[k + 4];
     let o = NET.ents.get(id);
     if (!o) o = { id, type, x: ex, y: ey, r: D.r, phase: Math.random() * 6.28, flash: 0, charge: 0, cdx: 0, cdy: 0, timer: 3, jump: null, boss: !!D.boss, final: !!D.final, kb: 0 };
+    netVel(o, ex, ey);
     o.tx = ex; o.ty = ey; if (fl & 1) o.flash = 0.12; o.hp = (fl >> 1) * 10; o.maxHp = 100;
     const x = d.ex[id];
     o.r = x && x.r ? x.r : D.r;
@@ -7459,11 +7461,26 @@ function netApply(d) {
   S.capys = d.cp.map(c => ({ x: c[0], y: c[1], vx: c[2], vy: c[3], phase: (c[0] + c[1]) * 0.05 }));
   for (const s of d.sfx || []) Music.sfx(s);
 }
+// v2.6.1: cada cosa sigue moviéndose a la velocidad que traía mientras llega la próxima foto (sin congelarse ni dar saltos)
+function netVel(o, nx, ny) {
+  if (o.rx !== undefined) {
+    let vx = (nx - o.rx) / NET.sdt, vy = (ny - o.ry) / NET.sdt;
+    if (Math.hypot(vx, vy) > 1100 || Math.hypot(nx - o.x, ny - o.y) > 320) { vx = vy = 0; o.x = nx; o.y = ny; }   // teletransporte de verdad: se pone de una
+    o.nvx = (o.nvx || 0) * 0.35 + vx * 0.65; o.nvy = (o.nvy || 0) * 0.35 + vy * 0.65;
+  } else { o.nvx = o.nvy = 0; }
+  o.rx = nx; o.ry = ny; o.next = 0;
+}
+function netGlide(o, dt) {
+  if (o.tx === undefined) return;
+  const ext = Math.max(0, Math.min(dt, 0.3 - (o.next || 0))); o.next = (o.next || 0) + dt;   // máximo 0,3 s adivinando
+  o.tx += (o.nvx || 0) * ext; o.ty += (o.nvy || 0) * ext;
+  const c = Math.min(1, dt * 12); o.x += (o.tx - o.x) * c; o.y += (o.ty - o.y) * c;
+}
 function guestTick(dt) {
   S.t += dt;
   const k = Math.min(1, dt / Math.max(0.06, (NET.gap || 66) / 1000));   // v2.5.3: se suaviza según qué tan seguido llegan las fotos
   const me = S.players[NET.me];
-  for (const P of S.players) if (P.tx !== undefined && P !== me) { P.x += (P.tx - P.x) * k; P.y += (P.ty - P.y) * k; }
+  for (const P of S.players) if (P.tx !== undefined && P !== me) netGlide(P, dt);
   if (me && me.tx !== undefined) {                                 // v2.5.4: predicción local, sin esperar la respuesta del host
     const free = S.state === "play" && !me.down && !me.gone && !(me.stunT > 0);
     const dir = free ? inputDir(0) : { x: 0, y: 0 }, sp = me.netSp || me.baseSpeed * (me.speedMult || 1), mv = dir.x !== 0 || dir.y !== 0;
@@ -7474,7 +7491,7 @@ function guestTick(dt) {
     if (err > 260 || me.down || !free) { me.x += ex * k; me.y += ey * k; }
     else if (err > lag) { const c = Math.min(1, dt * (mv ? 2.5 : 6)) * (err - lag) / err; me.x += ex * c; me.y += ey * c; }
   }
-  for (const e of S.enemies) { e.x += (e.tx - e.x) * k; e.y += (e.ty - e.y) * k; e.phase += dt * 8; e.flash = Math.max(0, e.flash - dt); }
+  for (const e of S.enemies) { netGlide(e, dt); e.phase += dt * 8; e.flash = Math.max(0, e.flash - dt); }
   for (const f of S.fx) { f.life -= dt; if (!f.boom) { f.x += f.vx * dt; f.y += f.vy * dt; f.vx *= 0.9; f.vy *= 0.9; } }
   S.fx = S.fx.filter(f => f.life > 0);
   for (const t of S.texts) { t.life -= dt; t.y -= (t.big ? 10 : 40) * dt; }
