@@ -771,7 +771,7 @@ body.pad input:focus { outline: 3px solid var(--gold); outline-offset: 4px; }
   </div>
   <div class="menufoot">
     <p class="menucredit"><b>JUANPA GAMES</b> · Una idea de Juan Pablo Sánchez Ramírez · Programado junto a Claude, de Anthropic</p>
-    <p class="muted" style="font-size:13px">Versión 2.6.2</p>
+    <p class="muted" style="font-size:13px">Versión 2.6.3</p>
   </div>
   <a class="discordbubble" id="btnDiscord" href="https://discord.gg/BWBnnfHnj" target="_blank" rel="noopener" tabindex="0" aria-label="Discord" title="Discord">
     <svg viewBox="0 0 32 32" aria-hidden="true"><path fill="#fff" d="M6 5h20a4 4 0 0 1 4 4v11a4 4 0 0 1-4 4H14l-6 5v-5H6a4 4 0 0 1-4-4V9a4 4 0 0 1 4-4z"/><circle cx="11" cy="14.5" r="2.2" fill="#5865f2"/><circle cx="16" cy="14.5" r="2.2" fill="#5865f2"/><circle cx="21" cy="14.5" r="2.2" fill="#5865f2"/></svg>
@@ -7070,6 +7070,20 @@ const ETYPES = Object.keys(ENEMIES);
 const r1 = v => Math.round((v || 0) * 10) / 10;
 const myName = () => playerName() || T("Jugador");
 let peerLoading = null;
+// v2.6.3: canal rápido para las fotos de la partida. Sin orden y sin reenvíos: si una foto se pierde,
+// no se espera, se usa la siguiente. Lo importante (mejoras, cofres, lobby…) sigue por el canal confiable.
+const FAST_LABEL = "selva-fast";
+(() => {
+  const PC = window.RTCPeerConnection; if (!PC || !PC.prototype.createDataChannel || PC.prototype.__selvaFast) return;
+  const orig = PC.prototype.createDataChannel;
+  PC.prototype.createDataChannel = function (label, cfg) { if (label === FAST_LABEL) cfg = { ordered: false, maxRetransmits: 0 }; return orig.call(this, label, cfg); };
+  PC.prototype.__selvaFast = true;
+})();
+function fastAttach(conn) {                                 // el anfitrión une el canal rápido con su jugador
+  const L = (NET.lobby || []).find((p, i) => i > 0 && p.conn && p.conn.peer === conn.peer);
+  if (L) { L.fast = conn; return true; }
+  return false;
+}
 function loadPeer() {
   if (window.Peer) return Promise.resolve();
   if (peerLoading) return peerLoading;
@@ -7123,9 +7137,11 @@ function setOnMsg(t, bad) { const el = $("onMsg"); el.textContent = t || ""; el.
 function netReset() {
   clearTimeout(NET.joinTimer);
   try { if (NET.hostConn) NET.hostConn.close(); } catch (e) {}
+  try { if (NET.fastConn) NET.fastConn.close(); } catch (e) {}
+  for (const p of NET.lobby || []) try { if (p.fast) p.fast.close(); } catch (e) {}
   for (const p of NET.lobby) try { if (p.conn) p.conn.close(); } catch (e) {}
   try { if (NET.peer) NET.peer.destroy(); } catch (e) {}
-  Object.assign(NET, { role: null, peer: null, code: "", lobby: [], me: 0, active: false, input: {}, seen: {}, sfx: [], hostConn: null, ents: new Map(), localPause: false, leaving: false, wpSig: [], ping: 0 });
+  Object.assign(NET, { role: null, peer: null, code: "", lobby: [], me: 0, active: false, input: {}, seen: {}, sfx: [], hostConn: null, ents: new Map(), localPause: false, leaving: false, wpSig: [], ping: 0, fastConn: null, fastPend: null, seq: 0, lastQ: 0 });
 }
 function netLeave() {                                   // salir de la sala a propósito
   if (!NET.role) return;
@@ -7180,6 +7196,13 @@ async function netHost() {
   NET.nm = !!(SETUP.nightmare && nightmareOpen());
   peer.on("open", () => { if (NET.peer === peer) { setOnMsg(""); showLobby(); } });
   peer.on("connection", conn => {
+    if (conn.label === FAST_LABEL) {                         // canal rápido de un amigo: solo para mandarle fotos
+      NET.fastPend = NET.fastPend || new Map();
+      conn.on("open", () => { if (!fastAttach(conn)) NET.fastPend.set(conn.peer, conn); });
+      conn.on("close", () => { for (const L of NET.lobby || []) if (L.fast === conn) L.fast = null; if (NET.fastPend) NET.fastPend.delete(conn.peer); });
+      conn.on("error", () => {});
+      return;
+    }
     const buf = { id: 0, parts: [] };
     conn.on("data", d => { if (d && d.t === "part") netUnpack(buf, d, m => netHostMsg(conn, m)); else netHostMsg(conn, d); });
     conn.on("close", () => netGuestLeft(conn));
@@ -7203,6 +7226,12 @@ async function netJoin() {
     const buf = { id: 0, parts: [] };
     conn.on("data", d => { if (d && d.t === "part") { NET.lastRecv = performance.now(); netUnpack(buf, d, netGuestMsg); } else netGuestMsg(d); });
     conn.on("close", () => { if (NET.hostConn === conn && !NET.leaving) netFail(NET_BYE[NET.active ? "lost" : "closed"]); });
+    try {                                                    // canal rápido para las fotos (si no abre, todo sigue por el confiable)
+      const fc = peer.connect(netId(code), { reliable: false, serialization: "json", label: FAST_LABEL });
+      const fbuf = { id: 0, parts: [] }; NET.fastConn = fc;
+      fc.on("data", d => { NET.lastRecv = performance.now(); if (d && d.t === "part") netUnpack(fbuf, d, netGuestMsg); else netGuestMsg(d); });
+      fc.on("error", () => {});
+    } catch (e) { }
   });
   peer.on("error", err => { if (NET.peer === peer) netError(err); });
   NET.joinTimer = setTimeout(() => { if (NET.peer === peer && !NET.lobby.length) netFail("No se encontró la sala. Revisa el código o pídele a tu amigo que la cree otra vez."); }, 15000);
@@ -7299,6 +7328,7 @@ function netHostMsg(conn, d) {
       const nm = cleanName(d.name) || T("Jugador"), i = NET.lobby.findIndex((p, k) => k > 0 && p.left && p.name === nm);
       if (i < 0 || !S || !S.players[i] || S.state === "over") return no("started");
       const L = NET.lobby[i]; L.conn = conn; L.left = false; NET.seen[i] = performance.now(); NET.input[i] = null; NET.wpSig[i] = "";
+      L.fast = null; if (NET.fastPend && NET.fastPend.has(conn.peer)) { L.fast = NET.fastPend.get(conn.peer); NET.fastPend.delete(conn.peer); }
       const P = S.players[i], A = alive()[0];
       P.gone = false; P.down = false; P.hp = Math.round(P.maxHp * 0.5); P.inv = 2.5; if (A) { P.x = A.x + 20; P.y = A.y; }
       netSend(conn, { t: "start", you: i, game: S.game, zone: S.biome, nm: S.nightmare ? 1 : 0, skins: S.players.map(Q => Q.skin || ""), ars: S.players.map(Q => Q.arsenal), pets: S.players.map(Q => Q.pet || ""), trails: S.players.map(Q => Q.trail || ""), chars: S.players.map(Q => Q.char), names: S.names || NET.lobby.map(q => q.name) });
@@ -7311,6 +7341,7 @@ function netHostMsg(conn, d) {
     const sk = {}; if (d.sk && typeof d.sk === "object") for (const c in CHARS) { const v = netSkin(d.sk[c], c); if (v) sk[c] = v; }
     const ar = {}; if (d.ar && typeof d.ar === "object") for (const c in CHARS) ar[c] = arsOk(d.ar[c], c);
     NET.lobby.push({ name: cleanName(d.name) || T("Jugador"), char: CHARS[d.char] ? d.char : "campesino", conn, up, cx, sk, ar });
+    if (NET.fastPend && NET.fastPend.has(conn.peer)) { NET.lobby[NET.lobby.length - 1].fast = NET.fastPend.get(conn.peer); NET.fastPend.delete(conn.peer); }
     netSendLobby(); if (!$("onLobby").hidden) renderLobby(); Music.sfx("tick");
     return;
   }
@@ -7368,10 +7399,10 @@ function netHostTick(now) {
   for (let i = 1; i < NET.lobby.length; i++) { const p = NET.lobby[i]; if (p.conn && p.conn.open && now - (p.snapAt || 0) >= (p.snapIv || 66)) due.push(p); }
   if (!due.length || now - NET.lastSnap < 60) return;
   NET.lastSnap = now;
-  const snap = netSnap(), sfx = snap.sfx || [];
+  const snap = netSnap(), sfx = snap.sfx || []; snap.q = NET.seq = (NET.seq || 0) + 1;   // número de foto: las viejas que lleguen tarde se ignoran
   for (let i = 1; i < NET.lobby.length; i++) { const p = NET.lobby[i]; p.sfxq = (p.sfxq || []).concat(sfx).slice(-16); }   // los sonidos no se pierden si a alguien se le salta una foto
   for (const p of due) {
-    const c = p.conn, queued = (c.bufferSize || 0) + (c.dataChannel ? c.dataChannel.bufferedAmount : 0);
+    const c = p.fast && p.fast.open ? p.fast : p.conn, queued = (c.bufferSize || 0) + (c.dataChannel ? c.dataChannel.bufferedAmount : 0);
     p.snapAt = now;
     // si todavía no le han llegado las fotos anteriores, no se le amontonan más: se salta esta y se le baja el ritmo
     if (queued > 16000) { p.snapIv = Math.min(200, (p.snapIv || 66) + 34); NET.skipped = (NET.skipped || 0) + 1; continue; }
@@ -7456,7 +7487,7 @@ function netGuestMsg(d) {
 }
 function netGuestStart(d) {
   clearTimeout(NET.joinTimer);
-  NET.active = true; NET.me = d.you; NET.ents = new Map(); NET.localPause = false; NET.lastRecv = performance.now(); NET.snapAt = 0; NET.gap = 66;
+  NET.active = true; NET.me = d.you; NET.ents = new Map(); NET.localPause = false; NET.lastRecv = performance.now(); NET.snapAt = 0; NET.gap = 66; NET.lastQ = 0;
   SETUP.game = d.game;
   S = { net: NET, mode: d.chars.length > 1 ? "duo" : "solo", n: d.chars.length, game: d.game, names: d.names, eshots: [], tOff: 0, chapter: null, biome: d.zone || "cafetal",
         mods: { horde: 1, beans: 1, enemySpeed: 1, playerSpeed: 1 }, daily: null, state: "play", t: 0, kills: 0, level: 1, xp: 0, xpNext: 6, pendingLevels: 0, picker: 0,
@@ -7470,6 +7501,7 @@ function netGuestStart(d) {
 }
 function netApply(d) {
   if (!S || !S.net) return;
+  if (d.q) { if (NET.lastQ && d.q <= NET.lastQ && NET.lastQ - d.q < 5000) return; NET.lastQ = d.q; }   // foto vieja que llegó tarde: no sirve
   { const now = performance.now(); NET.sdt = NET.snapAt ? Math.min(0.5, Math.max(0.03, (now - NET.snapAt) / 1000)) : 0.066; if (NET.snapAt) NET.gap = Math.min(250, (NET.gap || 66) * 0.8 + (now - NET.snapAt) * 0.2); NET.snapAt = now; }
   S.t = d.tm; S.kills = d.k; S.level = d.lv; S.xp = d.xp; S.xpNext = d.xn; S.beans = d.bn; S.shake = Math.max(S.shake, d.sk);
   S.event = d.ev; S.phase = d.ph; S.light = d.li; S.banner = d.ba; S.wave = d.wv; S.madreKilled = !!d.md;
